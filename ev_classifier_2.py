@@ -6,61 +6,83 @@ import joblib
 import xgboost as xgb
 import lightgbm as lgb
 import os
+import logging
+from typing import List, Tuple, Dict, Union
+import time
 
 class EVClassifier:
-    def __init__(self, xgb_model_path, lgb_model_path):
+    def __init__(self, xgb_model_path: str, lgb_model_path: str):
         """ 전기차 판별 모델 로드 """
         self.xgb_model = joblib.load(xgb_model_path)
         self.lgb_model = joblib.load(lgb_model_path)
+        self.logger = logging.getLogger(__name__)
 
-    def feature_extraction_image(self, image_path, crop_list):
-        """ 이미지에서 특징 추출 (HSV 히스토그램) """
-        image = Image.open(image_path)
-        x, y, width, height, angle = crop_list
-        crop_box = (x, y, x + width, y + height)
-
-        cropped_image = image.crop(crop_box).resize((320, 180)).rotate(angle)
-        cropped_image_cv = cv2.cvtColor(np.array(cropped_image), cv2.COLOR_RGB2HSV)
-
-        h_channel, s_channel, v_channel = cv2.split(cropped_image_cv)
-        hist_h = cv2.calcHist([h_channel], [0], None, [256], [0, 256])
-        hist_s = cv2.calcHist([s_channel], [0], None, [256], [0, 256])
-        hist_v = cv2.calcHist([v_channel], [0], None, [256], [0, 256])
-
-        fv = np.r_[hist_h, hist_s, hist_v].squeeze()
-        return fv
-
-    def predict(self, image_path, json_path):
-        """ 이미지 + JSON을 입력받아 전기차 여부 예측 """
-        # JSON 파일 로드
-        with open(json_path, 'r', encoding='utf-8') as f:
-            json_data = json.load(f)
-
-        if isinstance(json_data, list) and len(json_data) > 0:
-            json_data = json_data[0]
-
+    def preprocess_image(self, image: np.ndarray, crop_box: Tuple[int, int, int, int], angle: float) -> np.ndarray:
+        """ 이미지 전처리 (크롭, 리사이즈, 회전) """
         try:
-            x, y, width, height, angle = (
-                json_data['area']['x'],
-                json_data['area']['y'],
-                json_data['area']['width'],
-                json_data['area']['height'],
-                json_data['area']['angle'],
-            )
-        except KeyError:
-            raise ValueError("🚨 JSON 파일 형식 오류!")
+            x, y, w, h = crop_box
+            cropped = image[y:y+h, x:x+w]
+            resized = cv2.resize(cropped, (320, 180))
+            
+            if angle != 0:
+                center = (resized.shape[1]//2, resized.shape[0]//2)
+                matrix = cv2.getRotationMatrix2D(center, angle, 1.0)
+                resized = cv2.warpAffine(resized, matrix, (resized.shape[1], resized.shape[0]))
+            
+            return cv2.cvtColor(resized, cv2.COLOR_BGR2HSV)
+        except Exception as e:
+            self.logger.error(f"이미지 전처리 중 오류 발생: {str(e)}")
+            raise
 
-        crop_list = [x, y, width, height, angle]
+    def extract_features(self, hsv_image: np.ndarray) -> np.ndarray:
+        """ HSV 히스토그램 특징 추출 """
+        try:
+            h, s, v = cv2.split(hsv_image)
+            hist_h = cv2.calcHist([h], [0], None, [256], [0, 256])
+            hist_s = cv2.calcHist([s], [0], None, [256], [0, 256])
+            hist_v = cv2.calcHist([v], [0], None, [256], [0, 256])
+            
+            return np.r_[hist_h, hist_s, hist_v].squeeze()
+        except Exception as e:
+            self.logger.error(f"특징 추출 중 오류 발생: {str(e)}")
+            raise
 
-        # HSV 특징 추출
-        fv = self.feature_extraction_image(image_path, crop_list)
+    def process_frame(self, frame: np.ndarray, plate_info: Dict) -> Tuple[bool, float]:
+        """ 단일 프레임 처리 및 예측 """
+        try:
+            start_time = time.time()
+            
+            # 번호판 정보 추출
+            area = plate_info['area']
+            crop_box = (area['x'], area['y'], area['width'], area['height'])
+            
+            # 이미지 전처리
+            hsv_image = self.preprocess_image(frame, crop_box, area['angle'])
+            
+            # 특징 추출
+            features = self.extract_features(hsv_image)
+            
+            # 예측
+            xgb_pred = self.xgb_model.predict([features])[0]
+            xgb_prob = self.xgb_model.predict_proba([features])[0][1]
+            
+            # 신뢰도 기반 앙상블
+            if xgb_prob < 0.45:
+                prediction = self.lgb_model.predict([features])[0]
+            else:
+                prediction = xgb_pred
+            
+            elapsed_time = time.time() - start_time
+            return bool(prediction), elapsed_time
+            
+        except Exception as e:
+            self.logger.error(f"프레임 처리 중 오류 발생: {str(e)}")
+            raise
 
-        # XGBoost & LightGBM 예측
-        xgb_pred = self.xgb_model.predict([fv])[0]
-        lgb_pred = self.lgb_model.predict([fv])[0]
-
-        # 평균 앙상블 (가중치는 필요하면 조절 가능)
-        final_pred = (xgb_pred + lgb_pred) / 2
-        is_ev = int(final_pred > 0.5)  # 0.5 이상이면 전기차(1), 아니면 일반차(0)
-
-        return is_ev
+    def process_batch(self, frames: List[np.ndarray], plate_infos: List[Dict]) -> List[Tuple[bool, float]]:
+        """ 여러 프레임 일괄 처리 """
+        results = []
+        for frame, plate_info in zip(frames, plate_infos):
+            result = self.process_frame(frame, plate_info)
+            results.append(result)
+        return results
