@@ -24,6 +24,13 @@ wheels/
 # 가상환경
 venv/
 ENV/
+bin/
+include/
+lib/
+lib64/
+pyvenv.cfg
+pip-log.txt
+pip-delete-this-directory.txt
 
 # IDE
 .idea/
@@ -34,32 +41,33 @@ ENV/
 # 프로젝트 특정
 logs/
 results/
-models/*.pkl
-!models/.gitkeep
-
-# 모델 파일
+models/
 *.pkl
 *.joblib
 *.tflite
+*.db
+*.sqlite
+*.sqlite3
 
 # 데이터셋 파일
 *.csv
 *.json
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.bmp
 
 # 노트북 파일
 *.ipynb
+.ipynb_checkpoints/
 
 # 로그 파일
 *.log
-
-# IDE 설정 파일
-.vscode/
-.idea/
-*.swp
-*.swo
 
 # 기타 임시 파일
 *.tmp
 *.bak
 *.swp
-*~ 
+*~
+.DS_Store 

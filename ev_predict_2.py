@@ -7,6 +7,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 
+<<<<<<< HEAD
 @dataclass
 class PredictionResult:
     is_ev: bool
@@ -15,6 +16,8 @@ class PredictionResult:
     timestamp: datetime
     plate_number: str
 
+=======
+>>>>>>> 38b40d6c1846650cc251e70923d2ccd1510e0ed7
 class EVPredictor:
     def __init__(self, xgb_model_path: str, lgbm_model_path: str):
         """ 저장된 모델 불러오기 """
@@ -61,6 +64,7 @@ class EVPredictor:
             results.append(result)
         return results
 
+<<<<<<< HEAD
     def save_results(self, results: List[PredictionResult], output_path: str):
         """ 예측 결과 저장 """
         try:
@@ -86,3 +90,9 @@ class EVPredictor:
         except Exception as e:
             self.logger.error(f"결과 저장 중 오류 발생: {str(e)}")
             raise
+=======
+        # XGBoost 신뢰도가 낮은 경우 LightGBM 보완 적용
+        if xgb_prob < 0.45:  
+            return self.lgbm_model.predict([features])[0]
+        return xgb_pred
+>>>>>>> 38b40d6c1846650cc251e70923d2ccd1510e0ed7
